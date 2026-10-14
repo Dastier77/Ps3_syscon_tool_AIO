@@ -1,6 +1,6 @@
-pyserial==3.5
-customtkinter==5.2.2
-pillow==12.1.1
-darkdetect==0.8.0
-packaging==25.0
-pycryptodomex==3.20.0
+pyserial>=3.5
+customtkinter>=5.2.2
+pillow>=10.0.0
+darkdetect>=0.8.0
+packaging>=23.0
+pycryptodomex>=3.20.0
