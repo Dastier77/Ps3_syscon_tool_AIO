@@ -206,12 +206,12 @@ class PS3SysconV60_Final(ctk.CTk):
         # --- GRUPO: SELECCIÓN DE HARDWARE ---
         self.crear_seccion("--- MODELO DE PLACA ---")
         self.db_chips = {
-            "COK-001 (Fat)": "CXR",
-            "COK-002 (Fat)": "CXR",
-            "SEM-001 (Fat)": "CXR",
-            "DIA-001 (Fat)": "CXR",
-            "DIA-002 (Fat)": "CXR",
-            "VER-001 (Fat)": "CXR",
+            "COK-001 (Fat)": "FAT",
+            "COK-002 (Fat)": "FAT",
+            "SEM-001 (Fat)": "FAT",
+            "DIA-001 (Fat)": "FAT",
+            "DIA-002 (Fat)": "FAT",
+            "VER-001 (Fat)": "FAT",
             "DYN-001 (Slim 20xxA/B)": "CXR",
             "SUR-001 (Slim 21xxA/B)": "SW",
             "JTP-001 (Slim 25xxA/B)": "SW",
@@ -320,12 +320,27 @@ class PS3SysconV60_Final(ctk.CTk):
         )
         self.txt_errores_resumen.pack(padx=15, pady=(5, 15))
 
-        # CARD: Branding
+        # CARD: Branding y Soporte
         self.card_autor = ctk.CTkFrame(self.panel_derecho_container, fg_color="#161d24", corner_radius=15, border_width=2, border_color="#27ae60")
         self.card_autor.pack(fill="x", pady=10)
         ctk.CTkLabel(self.card_autor, text="DASTIER_77", font=("Segoe UI", 18, "bold"), text_color="#27ae60").pack(pady=(12, 0))
         
-        ctk.CTkButton(self.card_autor, text="CANAL YOUTUBE", command=lambda: webbrowser.open("https://www.youtube.com/@Dastier_77")).pack(pady=15, padx=25, fill="x")
+        # Botón de YouTube
+        ctk.CTkButton(
+            self.card_autor, 
+            text="CANAL YOUTUBE", 
+            command=lambda: webbrowser.open("https://www.youtube.com/@Dastier_77")
+        ).pack(pady=(15, 8), padx=25, fill="x")    
+
+        # Botón Integrado: Enviar reporte de errores / fallas al correo
+        ctk.CTkButton(
+            self.card_autor, 
+            text="✉️ REPORTAR FALLA", 
+            fg_color="#d35400", 
+            hover_color="#ba4a00",
+            font=("Segoe UI", 12, "bold"),
+            command=self.abrir_ventana_reporte
+        ).pack(pady=(0, 15), padx=25, fill="x")
         
     # ==========================================================
     # 4. SECCIÓN: MÉTODOS DE SOPORTE UI (INTERFAZ)
@@ -424,17 +439,27 @@ class PS3SysconV60_Final(ctk.CTk):
             self.actualizar_interfaz_hilo(f"❌ Error al iniciar: {e}")
 
     def leer_salida_hilo(self):
-        """ Lee línea por línea lo que responde el Syscon """
-        auth_intentado = False
+        """ Lee línea por línea lo que responde el Syscon con control inteligente de Auth """
+        auth_disparado = False
+        self.auth_exitoso = False
+        self.intentos_auth = 0
+        modo_actual = self.tipo_chip.get().upper()
+        
         try:
             for linea in iter(self.proceso_actual.stdout.readline, ''):
                 l_limpia = linea.strip()
                 if not l_limpia: continue
 
-                # Auto-Auth: Si vemos el prompt '>', enviamos 'auth' automáticamente
-                if ">" in l_limpia and not auth_intentado:
-                    self.after(600, lambda: self.inyectar_comando("auth"))
-                    auth_intentado = True
+                # Auto-Auth: Detecta el prompt '>' una sola vez por sesión
+                if ">" in l_limpia and not auth_disparado:
+                    auth_disparado = True
+                    if modo_actual in ["CXR", "SW"]:
+                        self.after(600, lambda: self.inyectar_comando("auth"))
+                    else:
+                        self.actualizar_interfaz_hilo("[SISTEMA] ℹ️ Placa FAT/Directa: Omitiendo secuencia Auth.")
+
+                # Procesamiento de respuestas de autenticación
+                self.procesar_respuesta_auth(l_limpia)
 
                 # Enviamos el texto a la pantalla principal
                 self.after(0, lambda l=l_limpia: self.actualizar_interfaz_hilo(l))
@@ -442,6 +467,23 @@ class PS3SysconV60_Final(ctk.CTk):
             self.after(0, lambda: self.actualizar_interfaz_hilo("[SISTEMA] 🔌 Conexión finalizada."))
         finally:
             self.proceso_actual = None
+
+    def procesar_respuesta_auth(self, linea):
+        """ Controla el éxito o reintento inteligente del comando auth """
+        l_up = linea.upper()
+        modo_actual = self.tipo_chip.get().upper()
+
+        if modo_actual == "FAT" or getattr(self, 'auth_exitoso', False):
+            return
+
+        if "SUCCESS" in l_up:
+            self.auth_exitoso = True
+            self.actualizar_interfaz_hilo("[SISTEMA] ✔️ Autenticación completada con éxito.")
+        elif any(err in l_up for err in ["INVALID", "FAIL", "ERROR", "F0000003"]):
+            if getattr(self, 'intentos_auth', 0) == 0:
+                self.intentos_auth = 1
+                self.actualizar_interfaz_hilo("[SISTEMA] 🔄 Auth estándar falló. Reintentando con variante AUTH...")
+                self.after(500, lambda: self.inyectar_comando("AUTH"))
 
     def actualizar_interfaz_hilo(self, linea):
         """ Aplica colores a la consola y dispara el análisis técnico """
@@ -507,9 +549,8 @@ class PS3SysconV60_Final(ctk.CTk):
                     
                     dd = v_seg // 86400
                     hh = (v_seg % 86400) // 3600
-                    mm = (v_seg % 3600) // 60  # <-- Agregamos el cálculo de minutos
+                    mm = (v_seg % 3600) // 60 
                     
-                    # Actualizamos el Label incluyendo los minutos
                     self.lbl_uso.configure(text=f"{dd}d {hh}h {mm}m", text_color="#f1c40f")
                     
                     self.esperando_eeprom = False
@@ -637,6 +678,87 @@ class PS3SysconV60_Final(ctk.CTk):
         lbl.pack(side="right")
         return lbl
 
+    def abrir_ventana_reporte(self):
+        """ Abre un cuadro de diálogo para que el tester explique el fallo """
+        import customtkinter as ctk
+
+        self.popup = ctk.CTkToplevel(self)
+        self.popup.title("Reportar Falla a Dastier")
+        self.popup.geometry("400x300")
+        self.popup.attributes("-topmost", True)
+
+        lbl = ctk.CTkLabel(self.popup, text="Explica brevemente qué pasó o qué error dio:", font=("Arial", 12, "bold"))
+        lbl.pack(pady=(15, 5), padx=15, anchor="w")
+
+        self.txt_comentario = ctk.CTkTextbox(self.popup, height=120)
+        self.txt_comentario.pack(padx=15, pady=5, fill="both", expand=True)
+        self.txt_comentario.insert("1.0", "Ej: Falla en el arranque, se protege al segundo...")
+
+        btn_enviar = ctk.CTkButton(
+            self.popup, 
+            text="🚀 ENVIAR", 
+            fg_color="#27ae60", 
+            hover_color="#219653",
+            command=self.enviar_correo_con_reporte
+        )
+        btn_enviar.pack(pady=15, padx=15, fill="x")
+
+    def enviar_correo_con_reporte(self):
+        """ Envía el correo electrónico con el log y la explicación del tester """
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        from datetime import datetime
+        import platform
+        import threading
+
+        EMAIL_ORIGEN = "hardwaresolutionsarg@gmail.com"
+        PASSWORD_APP = "twdl oews bjmn vmsp"
+        EMAIL_DESTINO = "hardwaresolutionsarg@gmail.com"
+
+        comentario_tester = self.txt_comentario.get("1.0", "end").strip()
+        self.popup.destroy()
+        self.actualizar_interfaz_hilo("[SISTEMA] 📧 Preparando y enviando correo electrónico...")
+
+        def tarea_envio_smtp():
+            try:
+                contenido_consola = self.txt_display.get("1.0", "end")
+                placa_actual = self.combo_placas.get() if hasattr(self, 'combo_placas') else "No especificada"
+                puerto_actual = self.combo_puertos.get() if hasattr(self, 'combo_puertos') else "No especificado"
+                
+                msg = MIMEMultipart()
+                msg['Subject'] = f"🚨 REPORTE DE TALLER: Falla en {placa_actual}"
+                msg['From'] = EMAIL_ORIGEN
+                msg['To'] = EMAIL_DESTINO
+
+                cuerpo_html = f"""
+                <h3>Nuevo Reporte Técnico de Taller</h3>
+                <p><b>Fecha y Hora:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                <p><b>Placa Seleccionada:</b> {placa_actual}</p>
+                <p><b>Puerto COM:</b> {puerto_actual}</p>
+                <p><b>Sistema Operativo:</b> {platform.system()} {platform.release()}</p>
+                <hr>
+                <h4>💬 Explicación del Tester:</h4>
+                <p style="background-color: #f2f2f2; padding: 10px; border-left: 4px solid #e74c3c;">{comentario_tester}</p>
+                <hr>
+                <h4>📜 Log Completo de Consola UART:</h4>
+                <pre style="background-color: #1e1e1e; color: #d4d4d4; padding: 10px;">{contenido_consola}</pre>
+                """
+                
+                msg.attach(MIMEText(cuerpo_html, 'html'))
+
+                server = smtplib.SMTP('smtp.gmail.com', 587)
+                server.starttls()
+                server.login(EMAIL_ORIGEN, PASSWORD_APP)
+                server.sendmail(EMAIL_ORIGEN, EMAIL_DESTINO, msg.as_string())
+                server.quit()
+
+                self.after(0, lambda: self.actualizar_interfaz_hilo("[SISTEMA] ✅ ¡Correo de reporte enviado con éxito!"))
+            
+            except Exception as ex:
+                self.after(0, lambda e=ex: self.actualizar_interfaz_hilo(f"❌ Error al enviar correo: {e}"))
+
+        threading.Thread(target=tarea_envio_smtp, daemon=True).start()   
 # ==========================================================
 # LANZAMIENTO DE LA APLICACIÓN
 # ==========================================================
