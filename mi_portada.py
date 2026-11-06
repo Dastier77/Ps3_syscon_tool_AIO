@@ -704,13 +704,16 @@ class PS3SysconV60_Final(ctk.CTk):
         btn_enviar.pack(pady=15, padx=15, fill="x")
 
     def enviar_correo_con_reporte(self):
-        """ Envía el correo electrónico con el log y la explicación del tester """
+        """ Envía el correo electrónico con captura de pantalla de la app, log y explicación """
         import smtplib
         from email.mime.text import MIMEText
         from email.mime.multipart import MIMEMultipart
+        from email.mime.image import MIMEImage
         from datetime import datetime
         import platform
         import threading
+        import io
+        from PIL import ImageGrab
 
         EMAIL_ORIGEN = "hardwaresolutionsarg@gmail.com"
         PASSWORD_APP = "twdl oews bjmn vmsp"
@@ -718,7 +721,28 @@ class PS3SysconV60_Final(ctk.CTk):
 
         comentario_tester = self.txt_comentario.get("1.0", "end").strip()
         self.popup.destroy()
-        self.actualizar_interfaz_hilo("[SISTEMA] 📧 Preparando y enviando correo electrónico...")
+        self.actualizar_interfaz_hilo("[SISTEMA] 📸 Capturando pantalla y preparando correo...")
+
+        # 🔻 1. TOMAR LA CAPTURA DE LA VENTANA ANTES DE LANZAR EL HILO
+        img_byte_arr = None
+        try:
+            # Forzar actualización para asegurar que la app esté dibujada al momento de la foto
+            self.update_idletasks()
+            
+            x = self.winfo_rootx()
+            y = self.winfo_rooty()
+            x1 = x + self.winfo_width()
+            y1 = y + self.winfo_height()
+            
+            # Recortar únicamente el área de la aplicación
+            img = ImageGrab.grab(bbox=(x, y, x1, y1))
+            
+            # Guardar en memoria RAM como PNG
+            buffer = io.BytesIO()
+            img.save(buffer, format='PNG')
+            img_byte_arr = buffer.getvalue()
+        except Exception as e:
+            print(f"Error al capturar pantalla: {e}")
 
         def tarea_envio_smtp():
             try:
@@ -726,11 +750,13 @@ class PS3SysconV60_Final(ctk.CTk):
                 placa_actual = self.combo_placas.get() if hasattr(self, 'combo_placas') else "No especificada"
                 puerto_actual = self.combo_puertos.get() if hasattr(self, 'combo_puertos') else "No especificado"
                 
-                msg = MIMEMultipart()
+                # Usar 'related' para soportar imágenes incrustadas por CID en HTML
+                msg = MIMEMultipart('related')
                 msg['Subject'] = f"🚨 REPORTE DE TALLER: Falla en {placa_actual}"
                 msg['From'] = EMAIL_ORIGEN
                 msg['To'] = EMAIL_DESTINO
 
+                # Cuerpo HTML con la sección para la captura de pantalla de la app
                 cuerpo_html = f"""
                 <h3>Nuevo Reporte Técnico de Taller</h3>
                 <p><b>Fecha y Hora:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
@@ -741,11 +767,20 @@ class PS3SysconV60_Final(ctk.CTk):
                 <h4>💬 Explicación del Tester:</h4>
                 <p style="background-color: #f2f2f2; padding: 10px; border-left: 4px solid #e74c3c;">{comentario_tester}</p>
                 <hr>
+                <h4>🖼️ Captura de Pantalla de la Aplicación en Banco:</h4>
+                <p><img src="cid:app_screenshot" style="max-width:100%; border:2px solid #34495e; border-radius:8px;"></p>
+                <hr>
                 <h4>📜 Log Completo de Consola UART:</h4>
                 <pre style="background-color: #1e1e1e; color: #d4d4d4; padding: 10px;">{contenido_consola}</pre>
                 """
                 
                 msg.attach(MIMEText(cuerpo_html, 'html'))
+
+                # Adjuntar la imagen si se capturó correctamente
+                if img_byte_arr:
+                    img_attachment = MIMEImage(img_byte_arr, name="screenshot.png")
+                    img_attachment.add_header('Content-ID', '<app_screenshot>')
+                    msg.attach(img_attachment)
 
                 server = smtplib.SMTP('smtp.gmail.com', 587)
                 server.starttls()
@@ -753,12 +788,12 @@ class PS3SysconV60_Final(ctk.CTk):
                 server.sendmail(EMAIL_ORIGEN, EMAIL_DESTINO, msg.as_string())
                 server.quit()
 
-                self.after(0, lambda: self.actualizar_interfaz_hilo("[SISTEMA] ✅ ¡Correo de reporte enviado con éxito!"))
+                self.after(0, lambda: self.actualizar_interfaz_hilo("[SISTEMA] ✅ ¡Reporte con captura enviado con éxito!"))
             
             except Exception as ex:
                 self.after(0, lambda e=ex: self.actualizar_interfaz_hilo(f"❌ Error al enviar correo: {e}"))
 
-        threading.Thread(target=tarea_envio_smtp, daemon=True).start()   
+        threading.Thread(target=tarea_envio_smtp, daemon=True).start() 
 # ==========================================================
 # LANZAMIENTO DE LA APLICACIÓN
 # ==========================================================
